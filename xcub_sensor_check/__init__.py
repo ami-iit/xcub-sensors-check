@@ -1,1 +1,1 @@
-from xcub_sensor_check.IMU_test import IMUTest
+from xcub_sensor_check.IMU_test import GyroTest
