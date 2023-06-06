@@ -1,0 +1,61 @@
+from pathlib import Path
+import argparse
+import bipedal_locomotion_framework as blf
+import xcub_sensor_check
+from typing import Dict
+
+
+def generate_test_list(config_file: Path):
+    param_handler = blf.parameters_handler.TomlParametersHandler()
+    param_handler.set_from_file(str(config_file))
+
+    test_list = []
+
+    try:
+        tests_name_list = param_handler.get_parameter_vector_string("test_list")
+    except:
+        tests_name_list = []
+
+    for test_name in tests_name_list:
+        test_group = param_handler.get_group(test_name)
+        test_type = getattr(xcub_sensor_check, test_group.get_parameter_string("type"))
+        test = test_type(test_name)
+
+        test.configure(test_group)
+        test_list.append(test)
+
+    return test_list
+
+
+def print_outcomes(test_list):
+    if not test_list:
+        print("😔 No tests were found!")
+        return
+
+    for test in test_list:
+        emoji = "🟢" if test.outcome else "🔴"
+        outcome = "Passed" if test.outcome else "Failed"
+        print(f"{emoji} Test {test.name}: {outcome}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Run the tests associated to the .")
+    parser.add_argument(
+        "--config_file",
+        "-c",
+        type=lambda p: Path(p).absolute(),
+        required=True,
+        help="Path to the configuration file containing all the name of the tests.",
+    )
+    args = parser.parse_args()
+
+    test_list = generate_test_list(config_file=args.config_file)
+
+    for test in test_list:
+        test.outcome = test.run()
+
+    print_outcomes(test_list)
+
+
+if __name__ == "__main__":
+    main()
