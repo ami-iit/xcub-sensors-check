@@ -1,8 +1,13 @@
+# Description: This script is used to run the tests associated to the xcub_sensor_check package.
+# Author: Giulio Romualdi
+# License: BSD 3-clause
+
 from pathlib import Path
 import argparse
 import bipedal_locomotion_framework as blf
 import xcub_sensor_check
-from typing import Dict
+from typing import Dict, List
+import resolve_robotics_uri_py
 
 
 def generate_test_list(config_file: Path, output_folder: Path):
@@ -16,8 +21,16 @@ def generate_test_list(config_file: Path, output_folder: Path):
     except:
         tests_name_list = []
 
+    # Get common parameters
+    model_absolute_path = resolve_robotics_uri_py.resolve_robotics_uri(
+        param_handler.get_parameter_string("model_package_path")
+    )
+    dataset_relative_path = param_handler.get_parameter_string("dataset_path")
+
     for test_name in tests_name_list:
         test_group = param_handler.get_group(test_name)
+        test_group.set_parameter_string("model_path", str(model_absolute_path))
+        test_group.set_parameter_string("dataset_file_name", dataset_relative_path)
         test_type = getattr(xcub_sensor_check, test_group.get_parameter_string("type"))
         test = test_type(test_name, output_folder)
 
@@ -27,7 +40,8 @@ def generate_test_list(config_file: Path, output_folder: Path):
     return test_list
 
 
-def print_outcomes(test_list):
+def print_outcomes(test_list: List[xcub_sensor_check.generic_test.GenericTest]):
+    print("📊 Test outcomes:")
     if not test_list:
         print("😔 No tests were found!")
         return
@@ -35,7 +49,10 @@ def print_outcomes(test_list):
     for test in test_list:
         emoji = "🟢" if test.outcome else "🔴"
         outcome = "Passed" if test.outcome else "Failed"
-        print(f"{emoji} Test {test.name}: {outcome}")
+        if test.name != test_list[-1].name:
+            print(f"├── {emoji} Test {test.name}: {outcome}")
+        else:
+            print(f"└── {emoji} Test {test.name}: {outcome}")
 
 
 def main():
@@ -61,8 +78,16 @@ def main():
         config_file=args.config_file, output_folder=args.output
     )
 
+    print(f"🧪 Running {len(test_list)} tests...")
     for test in test_list:
+        if test.name != test_list[-1].name:
+            print(f"├── Running test {test.name}...")
+        else:
+            print(f"└── Running test {test.name}...")
         test.outcome = test.run()
+
+    # print an empty line
+    print()
 
     print_outcomes(test_list)
 

@@ -168,9 +168,11 @@ class OrientationTest(GenericImuSignalTest):
             I_R_FK = kindyn.getWorldTransform(self.frame_name).getRotation()
             I_R_I_IMU = (
                 I_R_FK
-                * (idyn.Rotation.RPY(
-                    imu_signal_tmp[0, 0], imu_signal_tmp[0, 1], imu_signal_tmp[0, 2]
-                )).inverse()
+                * (
+                    idyn.Rotation.RPY(
+                        imu_signal_tmp[0, 0], imu_signal_tmp[0, 1], imu_signal_tmp[0, 2]
+                    )
+                ).inverse()
             )
 
             self.imu_signal.resize((self.joint_state.positions.shape[0], 3))
