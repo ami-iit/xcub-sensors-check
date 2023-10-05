@@ -142,6 +142,13 @@ class GyroTest(GenericImuSignalTest):
 
 
 class OrientationTest(GenericImuSignalTest):
+    """
+    The OrientationTest checks the orientation of the IMU. The test is performed in the following way:
+    - The orientation of the IMU is computed from the IMU itself and applying the transformation I_R_I_IMU
+    - The expected orientation of the IMU is computed from the FK
+    - The error is defined as log(I_R_FK * I_IMU_R_IMU.inverse())
+    """
+
     def __init__(self, name: str, additional_output_folder: Path):
         super().__init__(
             name=name,
@@ -153,11 +160,21 @@ class OrientationTest(GenericImuSignalTest):
         kindyn = self.get_kindyn()
         gravity = np.array([0, 0, -blf.math.StandardAccelerationOfGravitation])
 
+        # Open the file and get the signal
         with h5py.File(self.file_name, "r") as file:
             root_variable = file.get("robot_logger_device")
             imu_signal_tmp = np.squeeze(
                 np.array(root_variable[str(self.signal_type)][self.sensor_name]["data"])
             )
+
+            # For the first sample compute the orientation of the frame and force the IMU inertial frame to be aligned with the base frame
+            # In this context the following frames are defined:
+            # I: inertial frame
+            # I_IMU: inertial frame for the IMU
+            # FK: frame where the IMU is attached for the forward kinematics
+            # In details, for the first step we ask "I_R_FK = I_R_I_IMU * I_IMU_R_IMU"
+            # where - I_R_FK can be computed using the forward kinematics
+            #       - I_IMU_R_IMU is the orientation of the IMU in its inertial frame and it is retrieved from the imu itself
 
             kindyn.setRobotState(
                 self.joint_state.positions[0, :],
@@ -165,7 +182,10 @@ class OrientationTest(GenericImuSignalTest):
                 gravity,
             )
 
+            # Compute the orientation of the frame where the IMU is attached
             I_R_FK = kindyn.getWorldTransform(self.frame_name).getRotation()
+
+            # We compute I_R_I_IMU = I_R_FK * I_IMU_R_IMU.inverse()
             I_R_I_IMU = (
                 I_R_FK
                 * (
@@ -175,10 +195,12 @@ class OrientationTest(GenericImuSignalTest):
                 ).inverse()
             )
 
+            # Resize the matrices
             self.imu_signal.resize((self.joint_state.positions.shape[0], 3))
             self.expected_imu_signal.resize((self.joint_state.positions.shape[0], 3))
             error = np.zeros((self.joint_state.positions.shape[0], 3))
 
+            # Compute the orientation of the IMU for each sample
             for i in range(self.joint_state.positions.shape[0]):
                 kindyn.setRobotState(
                     self.joint_state.positions[i, :],
@@ -186,17 +208,22 @@ class OrientationTest(GenericImuSignalTest):
                     gravity,
                 )
 
+                # The expected orientation of the IMU is computed from the FK
                 expected_imu_signal_tmp = kindyn.getWorldTransform(
                     self.frame_name
                 ).getRotation()
+
                 self.expected_imu_signal[
                     i, :
                 ] = expected_imu_signal_tmp.asRPY().toNumPy()
 
+                # The orientation of the IMU is computed from the IMU itself and applying the transformation I_R_I_IMU
                 imu_signal_temp = I_R_I_IMU * idyn.Rotation.RPY(
                     imu_signal_tmp[i, 0], imu_signal_tmp[i, 1], imu_signal_tmp[i, 2]
                 )
                 self.imu_signal[i, :] = imu_signal_temp.asRPY().toNumPy()
+
+                # We define the error as log(I_R_FK * I_IMU_R_IMU.inverse())
                 error[i, :] = (
                     (expected_imu_signal_tmp * imu_signal_temp.inverse())
                     .log()
@@ -208,24 +235,29 @@ class OrientationTest(GenericImuSignalTest):
         fig.suptitle(self.name.replace("_", " "), fontsize=16)
         fig.set_size_inches(10.5, 6.5)
 
+        # Plot the results
         for i in range(3):
-            axs[i][0].set(ylabel="Angle " + axis_name[i] + " (rad)")
-            axs[i][0].plot(self.expected_imu_signal[:, i], label="Kinematics")
-            axs[i][0].plot(self.imu_signal[:, i], label="Sensor")
-            axs[i][1].plot(error[:, i], label="Error")
+            axs[i][0].set(ylabel="θ" + axis_name[i] + " (deg)")
+            axs[i][0].plot(
+                self.expected_imu_signal[:, i] * 180 / np.pi, label="Kinematics"
+            )
+            axs[i][0].plot(self.imu_signal[:, i] * 180 / np.pi, label="Sensor")
+            axs[i][1].plot(error[:, i] * 180 / np.pi, label="Error")
             axs[i][0].legend()
             axs[i][1].legend()
 
+        # Save the figure
         (self.additional_output_folder / self.name).mkdir(parents=True, exist_ok=True)
-
         plt.savefig(
             str(self.additional_output_folder / self.name / (self.name + ".png"))
         )
         plt.close()
 
+        # Compute the mean and the standard deviation of the error
         std = np.std(error, axis=0)
         mean = np.mean(error, axis=0)
 
+        # Check if the error is within the accepted tolerance
         return (np.abs(mean) < self.accepted_mean_error).all() and (
             std < self.accepted_std_error
         ).all()
