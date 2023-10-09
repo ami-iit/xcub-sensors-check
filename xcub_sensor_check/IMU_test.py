@@ -27,6 +27,7 @@ class GenericImuSignalTest(GenericTest):
         self.model_path = ""
         self.sensor_name = ""
         self.frame_name = ""
+        self.file_name = ""
         self.joints_name = []
 
         class JointState:
@@ -41,7 +42,6 @@ class GenericImuSignalTest(GenericTest):
 
         self.accepted_mean_error = np.array([])
         self.accepted_std_error = np.array([])
-        self.file_name = ""
 
     def configure(self, param_handler: blf.parameters_handler.IParametersHandler):
         self.sensor_name = param_handler.get_parameter_string("sensor_name")
@@ -52,6 +52,29 @@ class GenericImuSignalTest(GenericTest):
         )
         self.accepted_std_error = param_handler.get_parameter_vector_float(
             "error_std_tolerance"
+        )
+
+        # Get optional parameters
+        try:
+            base_link_orientation_rpy_deg = param_handler.get_parameter_vector_float(
+                "base_link_orientation_rpy_deg"
+            )
+        except:
+            base_link_orientation_rpy_deg = [0, 0, 0]
+            blf.log().info(
+                "No 'base_link_orientation_rpy found' in the parameter handler. Assuming [0, 0, 0]"
+            )
+
+        # Convert the base link orientation from deg to rad
+        base_link_orientation_rpy_rad = [
+            np.deg2rad(x) for x in base_link_orientation_rpy_deg
+        ]
+
+        # Convert the base link orientation from RPY to Rotation
+        self.base_link_orientation = idyn.Rotation.RPY(
+            base_link_orientation_rpy_rad[0],
+            base_link_orientation_rpy_rad[1],
+            base_link_orientation_rpy_rad[2],
         )
 
         self.file_name = param_handler.get_parameter_string("dataset_file_name")
@@ -95,6 +118,9 @@ class GyroTest(GenericImuSignalTest):
         kindyn = self.get_kindyn()
         gravity = np.array([0, 0, -blf.math.StandardAccelerationOfGravitation])
 
+        I_T_base = idyn.Transform(self.base_link_orientation, idyn.Position.Zero())
+        base_velocity = idyn.Twist.Zero()
+
         with h5py.File(self.file_name, "r") as file:
             root_variable = file.get("robot_logger_device")
             self.imu_signal = np.squeeze(
@@ -103,7 +129,9 @@ class GyroTest(GenericImuSignalTest):
 
         for i in range(self.joint_state.positions.shape[0]):
             kindyn.setRobotState(
+                I_T_base,
                 self.joint_state.positions[i, :],
+                base_velocity,
                 self.joint_state.velocities[i, :],
                 gravity,
             )
@@ -160,6 +188,9 @@ class OrientationTest(GenericImuSignalTest):
         kindyn = self.get_kindyn()
         gravity = np.array([0, 0, -blf.math.StandardAccelerationOfGravitation])
 
+        I_T_base = idyn.Transform(self.base_link_orientation, idyn.Position.Zero())
+        base_velocity = idyn.Twist.Zero()
+
         # Open the file and get the signal
         with h5py.File(self.file_name, "r") as file:
             root_variable = file.get("robot_logger_device")
@@ -177,7 +208,9 @@ class OrientationTest(GenericImuSignalTest):
             #       - I_IMU_R_IMU is the orientation of the IMU in its inertial frame and it is retrieved from the imu itself
 
             kindyn.setRobotState(
+                I_T_base,
                 self.joint_state.positions[0, :],
+                base_velocity,
                 self.joint_state.velocities[0, :],
                 gravity,
             )
@@ -203,7 +236,9 @@ class OrientationTest(GenericImuSignalTest):
             # Compute the orientation of the IMU for each sample
             for i in range(self.joint_state.positions.shape[0]):
                 kindyn.setRobotState(
+                    I_T_base,
                     self.joint_state.positions[i, :],
+                    base_velocity,
                     self.joint_state.velocities[i, :],
                     gravity,
                 )
@@ -239,10 +274,10 @@ class OrientationTest(GenericImuSignalTest):
         for i in range(3):
             axs[i][0].set(ylabel="θ" + axis_name[i] + " (deg)")
             axs[i][0].plot(
-                self.expected_imu_signal[:, i] * 180 / np.pi, label="Kinematics"
+                np.rad2deg(self.expected_imu_signal[:, i]), label="Kinematics"
             )
-            axs[i][0].plot(self.imu_signal[:, i] * 180 / np.pi, label="Sensor")
-            axs[i][1].plot(error[:, i] * 180 / np.pi, label="Error")
+            axs[i][0].plot(np.rad2deg(self.imu_signal[:, i]), label="Sensor")
+            axs[i][1].plot(np.rad2deg(error[:, i]), label="Error")
             axs[i][0].legend()
             axs[i][1].legend()
 
