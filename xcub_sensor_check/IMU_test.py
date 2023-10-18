@@ -386,10 +386,24 @@ class AccTest(GenericImuSignalTest):
                 gravity,
             )
 
-            tmp = kindyn.getFrameAcc(
+            # The accelerometer measures the so called "proper acceleration" which can
+            # be computed from the spatial acceleration provided by the kinematics {}^B \dot{v}_{A,B} as follows
+            # α_{A,B}^g = {}^B \dot{v}_{A,B} - {}^B v_{A,B} x {}^B ω_{A,B} - {}^B g
+            # where:
+            #      - {}^B v_{A,B} is the velocity of the frame A with respect to the frame B
+            #      - {}^B ω_{A,B} is the angular velocity of the frame A with respect to the frame B
+            #      - {}^B g is the gravity vector expressed in the frame B
+
+            # In the following, we neglect the term related to the gravity, {}^B g, since
+            # it is already included in the base acceleration
+            spatial_acceleration = kindyn.getFrameAcc(
                 self.frame_name, base_acceleration, self.joint_state.accelerations[i, :]
             ).toNumPy()
-            self.expected_imu_signal[i, :] = tmp[:3]
+
+            frame_velocity = kindyn.getFrameVel(self.frame_name).toNumPy()
+            self.expected_imu_signal[i, :] = spatial_acceleration[:3] - np.cross(
+                frame_velocity[:3], frame_velocity[3:]
+            )
 
         error = self.expected_imu_signal - self.imu_signal
 
