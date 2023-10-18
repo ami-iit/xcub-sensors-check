@@ -6,6 +6,7 @@ from enum import Enum
 import idyntree.bindings as idyn
 from pathlib import Path
 import matplotlib.pyplot as plt
+from scipy.signal import savgol_filter
 
 
 class SignalType(Enum):
@@ -77,23 +78,77 @@ class GenericImuSignalTest(GenericTest):
             base_link_orientation_rpy_rad[2],
         )
 
+        compute_joint_velocity_from_position = param_handler.get_parameter_bool(
+            "compute_joint_velocity_from_position"
+        )
+        compute_joint_acceleration_from_position = param_handler.get_parameter_bool(
+            "compute_joint_acceleration_from_position"
+        )
+
+        velocity_window_length = 0
+        if compute_joint_velocity_from_position:
+            velocity_window_length = param_handler.get_parameter_int(
+                "velocity_svg_window_length"
+            )
+
+        acceleration_window_length = 0
+        if compute_joint_acceleration_from_position:
+            acceleration_window_length = param_handler.get_parameter_int(
+                "acceleration_svg_window_length"
+            )
+
         self.file_name = param_handler.get_parameter_string("dataset_file_name")
+
         with h5py.File(self.file_name, "r") as file:
             root_variable = file.get("robot_logger_device")
             joint_ref = root_variable["description_list"]
+
             self.joints_name = [
                 "".join(chr(c[0]) for c in file[ref]) for ref in joint_ref[0]
             ]
+
             self.joint_state.positions = np.squeeze(
                 np.array(root_variable["joints_state"]["positions"]["data"])
             )
 
-            self.joint_state.velocities = np.squeeze(
-                np.array(root_variable["joints_state"]["velocities"]["data"])
+            sampling_time = np.average(
+                np.diff(
+                    np.squeeze(
+                        np.array(
+                            root_variable["joints_state"]["positions"]["timestamps"]
+                        )
+                    )
+                )
             )
-            self.joint_state.accelerations = np.squeeze(
-                np.array(root_variable["joints_state"]["accelerations"]["data"])
-            )
+
+            if compute_joint_velocity_from_position:
+                self.joint_state.velocities = (
+                    savgol_filter(
+                        x=self.joint_state.positions,
+                        window_length=velocity_window_length,
+                        polyorder=3,
+                        axis=0,
+                        deriv=1,
+                    )
+                    / sampling_time
+                )
+            else:
+                self.joint_state.velocities = np.squeeze(
+                    np.array(root_variable["joints_state"]["velocities"]["data"])
+                )
+
+            if compute_joint_acceleration_from_position:
+                self.joint_state.accelerations = savgol_filter(
+                    x=self.joint_state.positions,
+                    window_length=acceleration_window_length,
+                    polyorder=3,
+                    axis=0,
+                    deriv=2,
+                ) / (sampling_time**2)
+            else:
+                self.joint_state.accelerations = np.squeeze(
+                    np.array(root_variable["joints_state"]["accelerations"]["data"])
+                )
 
         self.expected_imu_signal.resize((self.joint_state.positions.shape[0], 3))
 
@@ -147,10 +202,12 @@ class GyroTest(GenericImuSignalTest):
         fig.set_size_inches(10.5, 6.5)
 
         for i in range(3):
-            axs[i][0].set(ylabel="ω" + axis_name[i] + " (rad/s)")
-            axs[i][0].plot(self.expected_imu_signal[:, i], label="Kinematics")
-            axs[i][0].plot(self.imu_signal[:, i], label="Sensor")
-            axs[i][1].plot(error[:, i], label="Error")
+            axs[i][0].set(ylabel="ω${}_{" + axis_name[i] + "}$ (deg/s)")
+            axs[i][0].plot(
+                np.rad2deg(self.expected_imu_signal[:, i]), label="Kinematics"
+            )
+            axs[i][0].plot(np.rad2deg(self.imu_signal[:, i]), label="Sensor")
+            axs[i][1].plot(np.rad2deg(error[:, i]), label="Error")
             axs[i][0].legend()
             axs[i][1].legend()
 
@@ -272,7 +329,7 @@ class OrientationTest(GenericImuSignalTest):
 
         # Plot the results
         for i in range(3):
-            axs[i][0].set(ylabel="θ" + axis_name[i] + " (deg)")
+            axs[i][0].set(ylabel="θ${}_{" + axis_name[i] + "}$ (deg)")
             axs[i][0].plot(
                 np.rad2deg(self.expected_imu_signal[:, i]), label="Kinematics"
             )
@@ -293,6 +350,97 @@ class OrientationTest(GenericImuSignalTest):
         mean = np.mean(error, axis=0)
 
         # Check if the error is within the accepted tolerance
+        return (np.abs(mean) < self.accepted_mean_error).all() and (
+            std < self.accepted_std_error
+        ).all()
+
+
+class AccTest(GenericImuSignalTest):
+    def __init__(self, name: str, additional_output_folder: Path):
+        super().__init__(
+            name=name,
+            additional_output_folder=additional_output_folder,
+            signal_type=SignalType.accelerometer,
+        )
+
+    def run(self):
+        kindyn = self.get_kindyn()
+        gravity = np.array([0, 0, -blf.math.StandardAccelerationOfGravitation])
+
+        I_T_base = idyn.Transform(self.base_link_orientation, idyn.Position.Zero())
+        base_velocity = idyn.Twist.Zero()
+
+        # Here we assume that the x coordinate of inertial frame is
+        # aligned to the gravity vector
+        base_acceleration = idyn.SpatialAcc()
+        base_acceleration.zero()
+        base_acceleration[2] = +blf.math.StandardAccelerationOfGravitation
+
+        # Then we apply the adjoint transformation to obtain the acceleration
+        # expressed in the base frame.
+        # Please check Table 2.2 of PhD thesis of Silvio Traversaro for more details
+        # https://traversaro.github.io/traversaro-phd-thesis/traversaro-phd-thesis.pdf
+        base_acceleration = (I_T_base.inverse() * base_acceleration).toNumPy()
+
+        with h5py.File(self.file_name, "r") as file:
+            root_variable = file.get("robot_logger_device")
+            self.imu_signal = np.squeeze(
+                np.array(root_variable[str(self.signal_type)][self.sensor_name]["data"])
+            )
+
+        for i in range(self.joint_state.positions.shape[0]):
+            kindyn.setRobotState(
+                I_T_base,
+                self.joint_state.positions[i, :],
+                base_velocity,
+                self.joint_state.velocities[i, :],
+                gravity,
+            )
+
+            # The accelerometer measures the so called "proper acceleration" which can
+            # be computed from the spatial acceleration provided by the kinematics {}^B \dot{v}_{A,B} as follows
+            # α_{A,B}^g = {}^B \dot{v}_{A,B} - {}^B v_{A,B} x {}^B ω_{A,B} - {}^B g
+            # where:
+            #      - {}^B v_{A,B} is the velocity of the frame A with respect to the frame B
+            #      - {}^B ω_{A,B} is the angular velocity of the frame A with respect to the frame B
+            #      - {}^B g is the gravity vector expressed in the frame B
+
+            # In the following, we neglect the term related to the gravity, {}^B g, since
+            # it is already included in the base acceleration
+            spatial_acceleration = kindyn.getFrameAcc(
+                self.frame_name, base_acceleration, self.joint_state.accelerations[i, :]
+            ).toNumPy()
+
+            frame_velocity = kindyn.getFrameVel(self.frame_name).toNumPy()
+            self.expected_imu_signal[i, :] = spatial_acceleration[:3] - np.cross(
+                frame_velocity[:3], frame_velocity[3:]
+            )
+
+        error = self.expected_imu_signal - self.imu_signal
+
+        fig, axs = plt.subplots(3, 2)
+        axis_name = ["x", "y", "z"]
+        fig.suptitle(self.name.replace("_", " "), fontsize=16)
+        fig.set_size_inches(10.5, 6.5)
+
+        for i in range(3):
+            axs[i][0].set(ylabel="α${}^g_{" + axis_name[i] + "}$ (m/s${}^2$)")
+            axs[i][0].plot(self.expected_imu_signal[:, i], label="Kinematics")
+            axs[i][0].plot(self.imu_signal[:, i], label="Sensor")
+            axs[i][1].plot(error[:, i], label="Error")
+            axs[i][0].legend()
+            axs[i][1].legend()
+
+        (self.additional_output_folder / self.name).mkdir(parents=True, exist_ok=True)
+
+        plt.savefig(
+            str(self.additional_output_folder / self.name / (self.name + ".png"))
+        )
+        plt.close()
+
+        std = np.std(error, axis=0)
+        mean = np.mean(error, axis=0)
+
         return (np.abs(mean) < self.accepted_mean_error).all() and (
             std < self.accepted_std_error
         ).all()

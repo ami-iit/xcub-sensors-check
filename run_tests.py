@@ -27,10 +27,50 @@ def generate_test_list(config_file: Path, output_folder: Path):
     )
     dataset_relative_path = param_handler.get_parameter_string("dataset_path")
 
+    compute_joint_velocity_from_position = param_handler.get_parameter_bool(
+        "compute_joint_velocity_from_position"
+    )
+    compute_joint_acceleration_from_position = param_handler.get_parameter_bool(
+        "compute_joint_acceleration_from_position"
+    )
+
+    velocity_window_length = 0
+    if compute_joint_velocity_from_position:
+        velocity_window_length = param_handler.get_parameter_int(
+            "velocity_svg_window_length"
+        )
+
+        blf.log().info(
+            f"Computing joint velocity from position using a window length of {velocity_window_length}"
+        )
+
+    acceleration_window_length = 0
+    if compute_joint_acceleration_from_position:
+        acceleration_window_length = param_handler.get_parameter_int(
+            "acceleration_svg_window_length"
+        )
+        blf.log().info(
+            f"Computing joint acceleration from position using a window length of {acceleration_window_length}"
+        )
+
     for test_name in tests_name_list:
         test_group = param_handler.get_group(test_name)
         test_group.set_parameter_string("model_path", str(model_absolute_path))
         test_group.set_parameter_string("dataset_file_name", dataset_relative_path)
+        test_group.set_parameter_bool(
+            "compute_joint_velocity_from_position", compute_joint_velocity_from_position
+        )
+        test_group.set_parameter_int(
+            "velocity_svg_window_length", velocity_window_length
+        )
+        test_group.set_parameter_bool(
+            "compute_joint_acceleration_from_position",
+            compute_joint_acceleration_from_position,
+        )
+        test_group.set_parameter_int(
+            "acceleration_svg_window_length", acceleration_window_length
+        )
+
         test_type = getattr(xcub_sensor_check, test_group.get_parameter_string("type"))
         test = test_type(test_name, output_folder)
 
