@@ -202,10 +202,12 @@ class GyroTest(GenericImuSignalTest):
         fig.set_size_inches(10.5, 6.5)
 
         for i in range(3):
-            axs[i][0].set(ylabel="ω" + axis_name[i] + " (rad/s)")
-            axs[i][0].plot(self.expected_imu_signal[:, i], label="Kinematics")
-            axs[i][0].plot(self.imu_signal[:, i], label="Sensor")
-            axs[i][1].plot(error[:, i], label="Error")
+            axs[i][0].set(ylabel="ω${}_{" + axis_name[i] + "}$ (deg/s)")
+            axs[i][0].plot(
+                np.rad2deg(self.expected_imu_signal[:, i]), label="Kinematics"
+            )
+            axs[i][0].plot(np.rad2deg(self.imu_signal[:, i]), label="Sensor")
+            axs[i][1].plot(np.rad2deg(error[:, i]), label="Error")
             axs[i][0].legend()
             axs[i][1].legend()
 
@@ -327,7 +329,7 @@ class OrientationTest(GenericImuSignalTest):
 
         # Plot the results
         for i in range(3):
-            axs[i][0].set(ylabel="θ" + axis_name[i] + " (deg)")
+            axs[i][0].set(ylabel="θ${}_{" + axis_name[i] + "}$ (deg)")
             axs[i][0].plot(
                 np.rad2deg(self.expected_imu_signal[:, i]), label="Kinematics"
             )
@@ -413,7 +415,7 @@ class AccTest(GenericImuSignalTest):
         fig.set_size_inches(10.5, 6.5)
 
         for i in range(3):
-            axs[i][0].set(ylabel="x" + axis_name[i] + " (m/s^2)")
+            axs[i][0].set(ylabel="α${}^g_{" + axis_name[i] + "}$ (m/s${}^2$)")
             axs[i][0].plot(self.expected_imu_signal[:, i], label="Kinematics")
             axs[i][0].plot(self.imu_signal[:, i], label="Sensor")
             axs[i][1].plot(error[:, i], label="Error")
