@@ -369,9 +369,18 @@ class AccTest(GenericImuSignalTest):
 
         I_T_base = idyn.Transform(self.base_link_orientation, idyn.Position.Zero())
         base_velocity = idyn.Twist.Zero()
-        base_acceleration = idyn.Vector6()
+
+        # Here we assume that the x coordinate of inertial frame is
+        # aligned to the gravity vector
+        base_acceleration = idyn.SpatialAcc()
         base_acceleration.zero()
-        base_acceleration[2] = blf.math.StandardAccelerationOfGravitation
+        base_acceleration[2] = +blf.math.StandardAccelerationOfGravitation
+
+        # Then we apply the adjoint transformation to obtain the acceleration
+        # expressed in the base frame.
+        # Please check Table 2.2 of PhD thesis of Silvio Traversaro for more details
+        # https://traversaro.github.io/traversaro-phd-thesis/traversaro-phd-thesis.pdf
+        base_acceleration = (I_T_base.inverse() * base_acceleration).toNumPy()
 
         with h5py.File(self.file_name, "r") as file:
             root_variable = file.get("robot_logger_device")
